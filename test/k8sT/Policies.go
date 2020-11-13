@@ -1418,6 +1418,34 @@ var _ = Describe("K8sPolicyTest", func() {
 				return count
 			}
 
+			testConnectivity2 := func(dstIP string, expectSuccess bool, monitor *helpers.CmdRes) int {
+				action := "allowed"
+				if !expectSuccess {
+					action = "denied"
+				}
+				By("Testing that connectivity from outside node is %s", action)
+
+				var count int
+				ConsistentlyWithOffset(1, func() bool {
+					res := kubectl.ExecInHostNetNS(
+						context.TODO(),
+						outsideNodeName,
+						helpers.CurlFail("http://%s:%d", dstIP, 80),
+					)
+					// We want to count the number of attempts that achieved
+					// their expected result, so we can assert on how many
+					// policy verdict logs we should expect from `cilium
+					// monitor`.
+					if res.WasSuccessful() == expectSuccess {
+						count++
+					}
+					return res.WasSuccessful()
+				}, helpers.ShortCommandTimeout).Should(Equal(expectSuccess),
+				"Connectivity was expected to be %s consistently ... log: %s ", action, string(monitor.CombineOutput().Bytes()))
+
+				return count
+			}
+
 			It("connectivity works from the outside before any policies", func() {
 				// Ignore the return because we don't care about `cilium
 				// monitor` output in this test.
@@ -1473,7 +1501,7 @@ var _ = Describe("K8sPolicyTest", func() {
 				cnpAllowIngress := helpers.ManifestGet(kubectl.BasePath(),
 					"cnp-ingress-from-cidr-to-ports.yaml")
 				importPolicy(kubectl, testNamespace, cnpAllowIngress, "ingress-from-cidr-to-ports")
-				count := testConnectivity(backendPodIP, true)
+				count := testConnectivity2(backendPodIP, true, monitor)
 				monitorCancel()
 
 				By("Asserting that the expected policy verdict logs are in the monitor output")
